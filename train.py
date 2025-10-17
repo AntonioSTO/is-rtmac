@@ -124,9 +124,9 @@ if __name__ == "__main__":
     parser.add_argument('--split_file', type=str, required=True)
     
     parser.add_argument('--epochs', type=int, default=50)
-    parser.add_argument('--batch_size', type=int, default=16)
+    parser.add_argument('--batch_size', type=int, default=32)
     parser.add_argument('--learning_rate', type=float, default=0.001)
-    parser.add_argument('--window_size', type=int, default=300)
+    parser.add_argument('--window_size', type=int, default=32)
     parser.add_argument('--save_path', type=str, default='best_model.pth')
     
     args = parser.parse_args()
