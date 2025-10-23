@@ -51,17 +51,21 @@ def train_and_evaluate(args):
     print(f"Training on {len(train_files)} files, Validating on {len(val_files)} files.")
 
     # 1. Create Datasets (loading ALL samples initially)
+    # --- CHANGE: Added stride=args.stride ---
     train_dataset = PKUMMDDataset(
         skeleton_dir=args.skeleton_dir,
         label_dir=args.label_dir,
         file_list=train_files,
-        window_size=args.window_size
+        window_size=args.window_size,
+        stride=args.stride  # <--- PASSING THE STRIDE
     )
+    # --- CHANGE: Added stride=args.stride ---
     val_dataset = PKUMMDDataset(
         skeleton_dir=args.skeleton_dir,
         label_dir=args.label_dir,
         file_list=val_files,
-        window_size=args.window_size
+        window_size=args.window_size,
+        stride=args.stride  # <--- PASSING THE STRIDE
     )
 
     # 2. KEY CHANGE: Filter datasets to ONLY include samples where label > 0
@@ -75,22 +79,37 @@ def train_and_evaluate(args):
 
     # 3. Calculate Class Weights for the 51 Action Classes
     print("Calculating class weights for action classification...")
-    # Get labels (1-51) and remap them to (0-50) for bincount
     all_labels_actions = [(s[2] - 1) for s in train_dataset.samples]
-    # We need to ensure bincount has 51 bins, even if some classes aren't in the split
+    
+    if not all_labels_actions:
+        print("❌ Error: No action samples (label > 0) found in the training set. Check your data or stride.")
+        return
+
     class_counts = torch.bincount(torch.tensor(all_labels_actions), minlength=51)
     class_weights = 1. / class_counts.float()
-    # Handle classes with 0 samples to avoid dividing by zero (inf)
     class_weights[class_weights == float('inf')] = 0
-    class_weights = class_weights / class_weights.sum() # Normalize
+    class_weights = class_weights / class_weights.sum()
     class_weights = class_weights.to(device)
     print(f"Class Weights (for actions 1-51): {class_weights}")
 
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=2, pin_memory=True)
-    val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=2, pin_memory=True)
+    # --- CHANGE: Added num_workers=args.num_workers ---
+    train_loader = DataLoader(
+        train_dataset, 
+        batch_size=args.batch_size, 
+        shuffle=True, 
+        num_workers=args.num_workers, # <--- USING NUM_WORKERS ARG
+        pin_memory=True
+    )
+    # --- CHANGE: Added num_workers=args.num_workers ---
+    val_loader = DataLoader(
+        val_dataset, 
+        batch_size=args.batch_size, 
+        shuffle=False, 
+        num_workers=args.num_workers, # <--- USING NUM_WORKERS ARG
+        pin_memory=True
+    )
 
     # 4. Instantiate Model for MULTI-CLASS classification (num_class=51)
-    # We have 51 action classes (1 through 51)
     model = Model(num_class=51, num_point=25, num_person=2, graph='graph.graph.Graph', graph_args=dict()).to(device)
     
     # 5. Use the weighted loss function
@@ -108,7 +127,6 @@ def train_and_evaluate(args):
         for data, labels in tqdm(train_loader, desc="Training Classifier"):
             # 6. KEY CHANGE: Remap labels from [1...51] to [0...50]
             labels_remapped = labels - 1
-            
             data, labels = data.to(device), labels_remapped.to(device)
             
             optimizer.zero_grad()
@@ -132,7 +150,6 @@ def train_and_evaluate(args):
         total_val_preds = 0
         with torch.no_grad():
             for data, labels in tqdm(val_loader, desc="Validating Classifier"):
-                # 6. KEY CHANGE: Remap labels for validation
                 labels_remapped = labels - 1
                 data, labels = data.to(device), labels_remapped.to(device)
                 
@@ -157,12 +174,19 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train CTR-GCN Action Classifier (Actions Only)")
     parser.add_argument('--skeleton_dir', type=str, default='data/PKU_Skeleton_Renew')
     parser.add_argument('--label_dir', type=str, default='data/Vectorized_Labels')
-    parser.add_argument('--split_file', type=str, required=True, help="Path to the official split file")
+    
+    # --- CHANGE: Fixed the split_file argument ---
+    parser.add_argument('--split_file', type=str, default='data/splits/cross-view.txt', help="Path to the official split file")
+    
     parser.add_argument('--epochs', type=int, default=50)
-    parser.add_argument('--batch_size', type=int, default=16)
+    parser.add_argument('--batch_size', type=int, default=64)
     parser.add_argument('--learning_rate', type=float, default=0.001)
-    parser.add_argument('--window_size', type=int, default=300)
-    # Note: Default save path is changed
+    parser.add_argument('--window_size', type=int, default=32)
+    
+    # --- NEW ARGUMENTS FOR OPTIMIZATION ---
+    parser.add_argument('--stride', type=int, default=16, help="Stride for sliding window. 8 or 16 is good.")
+    parser.add_argument('--num_workers', type=int, default=4, help="Number of CPU workers for data loading")
+    
     parser.add_argument('--save_path', type=str, default='classifier_model.pth', help="Path to save the best classifier model")
     
     args = parser.parse_args()

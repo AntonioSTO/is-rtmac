@@ -13,7 +13,7 @@ import argparse
 
 # --- Import your project's modules ---
 from models.gcn import Model 
-from utils.dataset import PKUMMDDataset
+from utils.dataset import PKUMMDDataset # This will import the updated class
 
 def read_split_file(filepath):
     """
@@ -50,30 +50,51 @@ def train_and_evaluate(args):
     print(f"Found {len(all_files_in_dir)} total files.")
     print(f"Training on {len(train_files)} files, Validating on {len(val_files)} files.")
 
-    # 1. Create Datasets (loading ALL samples)
+    # 1. Create Datasets (passing the new stride argument)
     train_dataset = PKUMMDDataset(
         skeleton_dir=args.skeleton_dir,
         label_dir=args.label_dir,
         file_list=train_files,
-        window_size=args.window_size
+        window_size=args.window_size,
+        stride=args.stride  # <--- NEW: Pass stride to dataset
     )
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=2, pin_memory=True)
+    train_loader = DataLoader(
+        train_dataset, 
+        batch_size=args.batch_size, 
+        shuffle=True, 
+        num_workers=args.num_workers, # <--- NEW: Use num_workers
+        pin_memory=True
+    )
 
     val_dataset = PKUMMDDataset(
         skeleton_dir=args.skeleton_dir,
         label_dir=args.label_dir,
         file_list=val_files,
-        window_size=args.window_size
+        window_size=args.window_size,
+        stride=args.stride  # <--- NEW: Pass stride to dataset
     )
-    val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=2, pin_memory=True)
+    val_loader = DataLoader(
+        val_dataset, 
+        batch_size=args.batch_size, 
+        shuffle=False, 
+        num_workers=args.num_workers, # <--- NEW: Use num_workers
+        pin_memory=True
+    )
 
     # 2. Calculate Class Weights for Binary Classification
-    # This is CRITICAL to solve the class imbalance problem.
     print("Calculating class weights for binary detection...")
     all_labels_binary = [(s[2] > 0).item() for s in train_dataset.samples]
-    class_counts = torch.bincount(torch.tensor(all_labels_binary))
+    
+    # Check if there are any action samples at all
+    if not any(all_labels_binary):
+        print("❌ Error: No action samples (label > 0) found in the training set. Check your data or stride.")
+        return
+
+    # This fixes the 'Bool' error
+    class_counts = torch.bincount(torch.tensor(all_labels_binary).long())
+    
     class_weights = 1. / class_counts.float()
-    class_weights = class_weights / class_weights.sum() # Normalize
+    class_weights = class_weights / class_weights.sum() 
     class_weights = class_weights.to(device)
     print(f"Class Counts (0=NoAction, 1=Action): {class_counts}")
     print(f"Class Weights: {class_weights}")
@@ -81,7 +102,6 @@ def train_and_evaluate(args):
     # 3. Instantiate Model for BINARY classification (num_class=2)
     model = Model(num_class=2, num_point=25, num_person=2, graph='graph.graph.Graph', graph_args=dict()).to(device)
     
-    # 4. Use the weighted loss function
     criterion = nn.CrossEntropyLoss(weight=class_weights)
     optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
 
@@ -94,9 +114,7 @@ def train_and_evaluate(args):
         correct_preds = 0
         total_preds = 0
         for data, labels in tqdm(train_loader, desc="Training Detector"):
-            # 5. KEY CHANGE: Convert multi-class labels to binary (0 or 1)
             labels_binary = (labels > 0).long()
-            
             data, labels = data.to(device), labels_binary.to(device)
             
             optimizer.zero_grad()
@@ -120,7 +138,6 @@ def train_and_evaluate(args):
         total_val_preds = 0
         with torch.no_grad():
             for data, labels in tqdm(val_loader, desc="Validating Detector"):
-                # 5. KEY CHANGE: Convert labels to binary for validation
                 labels_binary = (labels > 0).long()
                 data, labels = data.to(device), labels_binary.to(device)
                 
@@ -145,12 +162,18 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train CTR-GCN Action Detector (Binary)")
     parser.add_argument('--skeleton_dir', type=str, default='data/PKU_Skeleton_Renew')
     parser.add_argument('--label_dir', type=str, default='data/Vectorized_Labels')
-    parser.add_argument('--split_file', type=str, default='data/splits/cross-subject.txt')
-    parser.add_argument('--epochs', type=int, default=50)
-    parser.add_argument('--batch_size', type=int, default=16)
+    parser.add_argument('--split_file', type=str, default='data/splits/cross-subject.txt', help="Path to the official split file")
+    
+    # --- Tunable parameters ---
+    parser.add_argument('--epochs', type=int, default=20)
+    parser.add_argument('--batch_size', type=int, default=64)
     parser.add_argument('--learning_rate', type=float, default=0.001)
-    parser.add_argument('--window_size', type=int, default=300)
-    # Note: Default save path is changed
+    parser.add_argument('--window_size', type=int, default=32)
+    
+    # --- NEW ARGUMENTS FOR OPTIMIZATION ---
+    parser.add_argument('--stride', type=int, default=16, help="Stride for sliding window. 8 or 16 is good.")
+    parser.add_argument('--num_workers', type=int, default=4, help="Number of CPU workers for data loading")
+    
     parser.add_argument('--save_path', type=str, default='detector_model.pth', help="Path to save the best detector model")
     
     args = parser.parse_args()
