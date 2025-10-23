@@ -148,8 +148,7 @@ def train_and_evaluate(args):
         mode='max',      # Track max validation accuracy
         factor=0.1,      # Reduce LR by 10x
         patience=5,      # Wait 5 epochs with no improvement before dropping
-        verbose=True
-    )
+            )
 
     best_val_accuracy = 0.0
     for epoch in range(args.epochs):
