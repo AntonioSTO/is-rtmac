@@ -165,7 +165,7 @@ if __name__ == "__main__":
     
     parser.add_argument('--skeleton_dir', type=str, default='data/PKU_Skeleton_Renew')
     parser.add_argument('--label_dir', type=str, default='data/Vectorized_Labels')
-    parser.add_argument('--split_file', type=str, default='data/splits/cross-subject.txt')
+    parser.add_argument('--split_file', type=str, default='data/splits/cross-view.txt')
     
     # These args must match the ones used for training
     parser.add_argument('--batch_size', type=int, default=64)
